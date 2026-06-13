@@ -31,7 +31,6 @@ body {
   overflow-x: hidden;
 }
 
-/* Glassmorphism Styles */
 .glass-panel {
   background: rgba(10, 15, 30, 0.7);
   backdrop-filter: blur(12px);
@@ -46,7 +45,6 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-/* Custom Gradients */
 .bg-gradient-neon {
   background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 50%, #8b5cf6 100%);
 }
@@ -57,20 +55,18 @@ body {
   -webkit-text-fill-color: transparent;
 }
 
-/* Box Breathing Animation */
 @keyframes breathe {
   0% { transform: scale(1); opacity: 0.7; }
-  25% { transform: scale(1.2); opacity: 1; } /* Inhale */
-  50% { transform: scale(1.2); opacity: 1; } /* Hold */
-  75% { transform: scale(1); opacity: 0.7; }  /* Exhale */
-  100% { transform: scale(1); opacity: 0.5; } /* Hold */
+  25% { transform: scale(1.2); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 1; }
+  75% { transform: scale(1); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 0.5; }
 }
 
 .breathing-circle {
   animation: breathe 16s infinite ease-in-out;
 }
 
-/* Scrollbar customizations */
 ::-webkit-scrollbar {
   width: 6px;
 }
