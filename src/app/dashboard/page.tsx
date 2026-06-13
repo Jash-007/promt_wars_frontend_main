@@ -16,7 +16,12 @@ import {
   Plus, 
   RotateCcw,
   CheckCircle,
-  FileText
+  LogOut,
+  Lock,
+  Mail,
+  User,
+  ShieldCheck,
+  Target
 } from "lucide-react";
 import { 
   LineChart, 
@@ -29,17 +34,42 @@ import {
   Legend 
 } from "recharts";
 
-// Default emergency helplines details (fallback)
 const DEFAULT_HELPLINES = [
   { name: "Vandrevala Foundation", phone: "+91-9999-666-555", hours: "24/7" },
   { name: "AASRA Suicide Prevention", phone: "+91-22-2754-6669", hours: "24/7" },
   { name: "Kiran Mental Health", phone: "+91-9141-323-253", hours: "24/7" }
 ];
 
+// Screen reader hidden label styling for maximum WCAG accessibility compliance
+const srOnlyStyle: React.CSSProperties = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  padding: "0",
+  margin: "-1px",
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  border: "0"
+};
+
 export default function Dashboard() {
+  // Authentication & Session state
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [authView, setAuthView] = useState<"login" | "register">("login");
+  const [sandboxMode, setSandboxMode] = useState(false);
+  
+  // Auth Form inputs
+  const [authUsername, setAuthUsername] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authFullName, setAuthFullName] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authExamType, setAuthExamType] = useState("JEE_MAIN");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
   // Student active details
   const [examType, setExamType] = useState("JEE_MAIN");
-  const [username, setUsername] = useState("Aspirant");
+  const [fullName, setFullName] = useState("Rahul");
   const [streakCount, setStreakCount] = useState(5);
   
   // Analytics and chart state
@@ -70,10 +100,10 @@ export default function Dashboard() {
   const [crisisData, setCrisisData] = useState<any>(null);
   
   // Tool recommendation overlays
-  const [activeTool, setActiveTool] = useState<string | null>(null); // "box_breathing", "pomodoro_sprint"
+  const [activeTool, setActiveTool] = useState<string | null>(null); 
   
   // Breathing Tool state
-  const [breathingPhase, setBreathingPhase] = useState("Inhale"); // Inhale, Hold, Exhale, Hold
+  const [breathingPhase, setBreathingPhase] = useState("Inhale"); 
   const [breathingSeconds, setBreathingSeconds] = useState(4);
   const [breathingLoop, setBreathingLoop] = useState<any>(null);
   
@@ -92,6 +122,31 @@ export default function Dashboard() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+  // Check auth state on load
+  useEffect(() => {
+    const savedToken = localStorage.getItem("stressfreak_auth_token");
+    if (savedToken) {
+      setAuthToken(savedToken);
+      fetchUserProfile(savedToken);
+    }
+  }, []);
+
+  // Fetch current user details
+  const fetchUserProfile = async (token: string) => {
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/auth/me`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const user = await res.json();
+        setFullName(user.full_name);
+        setExamType(user.exam_type);
+      }
+    } catch (err) {
+      console.warn("Auth check failed, using sandbox parameters", err);
+    }
+  };
+
   // Auto-scroll chat window
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -99,8 +154,11 @@ export default function Dashboard() {
 
   // Load initial dashboard metrics
   const fetchDashboardMetrics = async () => {
+    if (sandboxMode || !authToken) return;
     try {
-      const res = await fetch(`${backendUrl}/api/v1/analytics/dashboard`);
+      const res = await fetch(`${backendUrl}/api/v1/analytics/dashboard`, {
+        headers: { "Authorization": `Bearer ${authToken}` }
+      });
       if (res.ok) {
         const data = await res.json();
         setAnalyticsData(data);
@@ -111,8 +169,79 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchDashboardMetrics();
-  }, [backendUrl]);
+    if (authToken && !sandboxMode) {
+      fetchDashboardMetrics();
+    }
+  }, [authToken, sandboxMode]);
+
+  // Authentication Flow
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    setAuthLoading(true);
+
+    try {
+      if (authView === "register") {
+        const registerRes = await fetch(`${backendUrl}/api/v1/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: authUsername,
+            email: authEmail,
+            full_name: authFullName,
+            password: authPassword,
+            exam_type: authExamType
+          })
+        });
+        
+        const data = await registerRes.json();
+        if (!registerRes.ok) {
+          throw new Error(data.detail || "Registration failed.");
+        }
+        
+        setAuthView("login");
+        setAuthPassword("");
+        setAuthError("Account created! Please sign in with your credentials.");
+      } else {
+        const loginRes = await fetch(`${backendUrl}/api/v1/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username_or_email: authUsername,
+            password: authPassword
+          })
+        });
+
+        const data = await loginRes.json();
+        if (!loginRes.ok) {
+          throw new Error(data.detail || "Invalid login credentials.");
+        }
+
+        localStorage.setItem("stressfreak_auth_token", data.access_token);
+        setAuthToken(data.access_token);
+        fetchUserProfile(data.access_token);
+      }
+    } catch (err: any) {
+      setAuthError(err.message || "Connection to authorization server failed.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Sign out helper
+  const handleSignOut = () => {
+    localStorage.removeItem("stressfreak_auth_token");
+    setAuthToken(null);
+    setSandboxMode(false);
+    setSessionId(null);
+    setChatMessages([
+      {
+        role: "assistant",
+        content: "Hey there. Heavy prep load hitting today? I'm here. Dump what's in your head, or ask me about physics, revision strategies, or managing your parent's expectations. I get it.",
+        timestamp: new Date().toISOString()
+      }
+    ]);
+  };
 
   // Handle mock test logging submission
   const handleLogMockTest = async (e: React.FormEvent) => {
@@ -126,17 +255,30 @@ export default function Dashboard() {
       test_date: new Date().toISOString().split("T")[0]
     };
 
+    if (sandboxMode) {
+      const newMockList = [...analyticsData.mock_tests, {
+        id: String(Math.random()),
+        ...payload
+      }];
+      setAnalyticsData(prev => ({ ...prev, mock_tests: newMockList }));
+      setShowMockModal(false);
+      setNewMockName("");
+      return;
+    }
+
     try {
       const res = await fetch(`${backendUrl}/api/v1/analytics/mock-test`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`
+        },
         body: JSON.stringify(payload)
       });
       if (res.ok) {
         await fetchDashboardMetrics();
         setShowMockModal(false);
         setNewMockName("");
-        // Acknowledge logging in chat
         setChatMessages(prev => [
           ...prev,
           {
@@ -160,10 +302,37 @@ export default function Dashboard() {
     setAnalyzingJournal(true);
     setJournalAnalysisResult(null);
 
+    if (sandboxMode) {
+      setTimeout(() => {
+        const dummyResult = {
+          stress_level: 7,
+          burnout_index: 6,
+          anxiety_level: 8,
+          sleep_quality: 5,
+          cognitive_distortions: ["catastrophizing", "emotional_reasoning"],
+          stress_vectors: ["peer_comparison", "backlog_panic"],
+          primary_topic: "Physics",
+          insights: [
+            "Your backlog is causing paralysis. Set a Pomodoro Study Timer for one single topic today.",
+            "Avoid matching your scores to peers. Your improvement chart shows steady growth."
+          ]
+        };
+        setJournalAnalysisResult(dummyResult);
+        setStreakCount(prev => prev + 1);
+        setJournalContent("");
+        setAnalyzingJournal(false);
+        setActiveTool("pomodoro_sprint");
+      }, 1000);
+      return;
+    }
+
     try {
       const res = await fetch(`${backendUrl}/api/v1/journal/analyze`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`
+        },
         body: JSON.stringify({ content: rawContent })
       });
 
@@ -179,10 +348,9 @@ export default function Dashboard() {
       if (res.ok) {
         setJournalAnalysisResult(data);
         setJournalContent("");
-        setStreakCount(prev => prev + 1); // increment streak on entry logging
-        fetchDashboardMetrics(); // reload chart data
+        setStreakCount(prev => prev + 1);
+        fetchDashboardMetrics();
 
-        // Suggest tool recommendations if stress index is high
         if (data.stress_level > 6) {
           if (data.stress_vectors.includes("backlog_panic")) {
             setActiveTool("pomodoro_sprint");
@@ -207,10 +375,8 @@ export default function Dashboard() {
     const rawInput = chatInput.trim();
     if (!rawInput || isStreaming) return;
 
-    // Reset input immediately
     setChatInput("");
 
-    // Append user message
     const updatedHistory = [
       ...chatMessages,
       { role: "user", content: rawInput, timestamp: new Date().toISOString() }
@@ -218,11 +384,28 @@ export default function Dashboard() {
     setChatMessages(updatedHistory);
     setIsStreaming(true);
 
+    if (sandboxMode) {
+      setTimeout(() => {
+        setChatMessages(prev => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "You are currently running in Offline Sandbox Mode. The AI companion is resting, but you can play with the breathing tools, mock logs, and timers on the dashboard panel.",
+            timestamp: new Date().toISOString()
+          }
+        ]);
+        setIsStreaming(false);
+      }, 800);
+      return;
+    }
+
     try {
-      // API call to streaming endpoint
       const response = await fetch(`${backendUrl}/api/v1/chat/message`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`
+        },
         body: JSON.stringify({
           content: rawInput,
           session_id: sessionId,
@@ -245,12 +428,10 @@ export default function Dashboard() {
         throw new Error("Failed to initialize server response stream.");
       }
 
-      // Read response stream
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let assistantResponseText = "";
       
-      // Append initial assistant placeholder message
       setChatMessages(prev => [
         ...prev,
         { role: "assistant", content: "", timestamp: new Date().toISOString() }
@@ -264,7 +445,6 @@ export default function Dashboard() {
 
         const textChunk = decoder.decode(value, { stream: true });
         
-        // Parse metadata block if present
         if (textChunk.startsWith("__METADATA__:")) {
           const rawMeta = textChunk.split("\n")[0].replace("__METADATA__:", "");
           try {
@@ -276,7 +456,6 @@ export default function Dashboard() {
           } catch(e) {
             console.error("Failed to parse system metadata.", e);
           }
-          // Remove metadata line and process the rest of the text
           const lines = textChunk.split("\n");
           lines.shift();
           const cleanText = lines.join("\n");
@@ -285,7 +464,6 @@ export default function Dashboard() {
           assistantResponseText += textChunk;
         }
 
-        // Update assistant's last message stream view
         setChatMessages(prev => {
           const updated = [...prev];
           if (updated.length > 0) {
@@ -312,14 +490,13 @@ export default function Dashboard() {
       const interval = setInterval(() => {
         setBreathingSeconds(prev => {
           if (prev <= 1) {
-            // Swap phase
             setBreathingPhase(curr => {
               if (curr === "Inhale") return "Hold (Full)";
               if (curr === "Hold (Full)") return "Exhale";
               if (curr === "Exhale") return "Hold (Empty)";
               return "Inhale";
             });
-            return 4; // Reset to 4 counts
+            return 4;
           }
           return prev - 1;
         });
@@ -342,7 +519,6 @@ export default function Dashboard() {
           if (sec === 0) {
             setPomoMinutes(min => {
               if (min === 0) {
-                // Completed!
                 setPomoRunning(false);
                 clearInterval(pomoInterval.current);
                 alert("Pomodoro Study Sprint Completed! Time for a short 10-minute break.");
@@ -367,7 +543,6 @@ export default function Dashboard() {
   const getCombinedChartData = () => {
     const stressByDate = new Map<string, number>();
     analyticsData.stress_entries.forEach((item: any) => {
-      // Extract date string
       const d = item.created_at ? item.created_at.split("T")[0] : "";
       if (d) stressByDate.set(d, item.stress_level);
     });
@@ -377,12 +552,181 @@ export default function Dashboard() {
       return {
         date,
         score: test.score,
-        stressLevel: stressByDate.get(date) || 5, // fallback stress level
+        stressLevel: stressByDate.get(date) || 5, 
         name: test.test_name
       };
     }).sort((a: any, b: any) => a.date.localeCompare(b.date));
   };
 
+  // Stress Vector classification helper
+  const hasStressor = (vector: string) => {
+    if (journalAnalysisResult && journalAnalysisResult.stress_vectors) {
+      return journalAnalysisResult.stress_vectors.includes(vector);
+    }
+    return false;
+  };
+
+  // --- RENDER LOGIN / SIGNUP SCREEN IF NOT AUTHENTICATED ---
+  if (!authToken && !sandboxMode) {
+    return (
+      <div className="flex-1 bg-slate-950 flex items-center justify-center p-4 text-slate-100 min-h-screen">
+        <div className="glass-panel max-w-md w-full rounded-2xl p-6 border border-slate-800 flex flex-col gap-6 shadow-2xl relative overflow-hidden">
+          <div className="absolute -top-10 -right-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+          
+          <div className="text-center">
+            <h2 className="text-3xl font-extrabold text-gradient-neon tracking-tight flex items-center justify-center gap-2">
+              <ShieldCheck className="w-8 h-8 text-indigo-400 shrink-0" />
+              StressFreak
+            </h2>
+            <p className="text-xs text-slate-400 mt-2 max-w-xs mx-auto">
+              Secure, student-specific stress companion for JEE, NEET, and competitive exam preparation.
+            </p>
+          </div>
+
+          <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4 text-sm mt-2">
+            
+            {authView === "register" && (
+              <>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-400 font-semibold" htmlFor="fullNameInput">Full Name</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                    <input
+                      type="text"
+                      id="fullNameInput"
+                      className="w-full bg-slate-900/50 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      placeholder="e.g. Rahul Sharma"
+                      value={authFullName}
+                      onChange={(e) => setAuthFullName(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-slate-400 font-semibold" htmlFor="emailInput">Email Address</label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                    <input
+                      type="email"
+                      id="emailInput"
+                      className="w-full bg-slate-900/50 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                      placeholder="name@student.in"
+                      value={authEmail}
+                      onChange={(e) => setAuthEmail(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-semibold" htmlFor="usernameInput">Username</label>
+              <div className="relative">
+                <User className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                <input
+                  type="text"
+                  id="usernameInput"
+                  className="w-full bg-slate-900/50 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                  placeholder="aspirant123"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-400 font-semibold" htmlFor="passwordInput">Password</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                <input
+                  type="password"
+                  id="passwordInput"
+                  className="w-full bg-slate-900/50 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                  placeholder="••••••••"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+
+            {authView === "register" && (
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-400 font-semibold" htmlFor="examTypeSelect">Active Exam Target</label>
+                <select
+                  id="examTypeSelect"
+                  className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                  value={authExamType}
+                  onChange={(e) => setAuthExamType(e.target.value)}
+                >
+                  <option value="JEE_MAIN">JEE Main</option>
+                  <option value="JEE_ADVANCED">JEE Advanced</option>
+                  <option value="NEET">NEET UG</option>
+                  <option value="UPSC">UPSC Civil Services</option>
+                  <option value="CAT">CAT MBA</option>
+                </select>
+              </div>
+            )}
+
+            {authError && (
+              <p className="text-xs text-rose-400 font-semibold mt-1 bg-rose-500/10 border border-rose-500/20 p-2 rounded-lg" role="alert">
+                {authError}
+              </p>
+            )}
+
+            <button
+              type="submit"
+              disabled={authLoading}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold py-2 rounded-lg transition-all mt-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+            >
+              {authLoading ? "Verifying..." : authView === "login" ? "Sign In" : "Register"}
+            </button>
+          </form>
+
+          <div className="flex flex-col gap-3 items-center text-xs mt-2">
+            <button
+              onClick={() => {
+                setAuthView(authView === "login" ? "register" : "login");
+                setAuthError("");
+              }}
+              className="text-indigo-400 hover:underline font-semibold focus:underline focus:outline-none"
+            >
+              {authView === "login" ? "New here? Create student account" : "Have an account? Log In"}
+            </button>
+
+            <div className="w-full border-t border-slate-800 my-1" />
+
+            <button
+              onClick={() => {
+                setSandboxMode(true);
+                setFullName("Demo Student");
+                setAnalyticsData({
+                  mock_tests: [
+                    { test_name: "Mock AITS 1", test_date: "2026-06-08", score: 130 },
+                    { test_name: "Mock AITS 2", test_date: "2026-06-10", score: 155 },
+                    { test_name: "Mock AITS 3", test_date: "2026-06-12", score: 180 }
+                  ],
+                  stress_entries: [
+                    { created_at: "2026-06-08", stress_level: 8, burnout_index: 7 },
+                    { created_at: "2026-06-10", stress_level: 5, burnout_index: 5 },
+                    { created_at: "2026-06-12", stress_level: 3, burnout_index: 3 }
+                  ]
+                });
+              }}
+              className="text-slate-500 hover:text-slate-300 transition-all text-xs focus:text-slate-300 focus:outline-none"
+            >
+              Bypass: Use Offline Sandbox Mode (No backend required)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- RENDER SECURED DASHBOARD PAGE ---
   return (
     <div className="flex-1 bg-slate-950 p-4 md:p-8 flex flex-col gap-6 text-slate-100 min-h-screen">
       
@@ -392,30 +736,38 @@ export default function Dashboard() {
           <div className="flex items-center gap-2">
             <h1 className="text-3xl font-bold tracking-tight text-gradient-neon">StressFreak Dashboard</h1>
             <span className="bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 px-2 py-0.5 rounded text-xs font-semibold uppercase">
-              Pro Version
+              {sandboxMode ? "Offline Sandbox" : "Authorized User"}
             </span>
           </div>
           <p className="text-slate-400 text-sm mt-1">
-            Empathetic AI monitoring and stress tracking engineered specifically for Indian coaching students.
+            Welcome back, <span className="text-indigo-300 font-semibold">{fullName}</span>. Track test anxiety, map burnout, and reset focus.
           </p>
         </div>
         
         <div className="flex items-center gap-3">
           <div className="flex flex-col items-end">
-            <span className="text-xs text-slate-400">Targeting Exam</span>
-            <select 
-              aria-label="Target Exam Mode"
-              className="bg-slate-900 border border-slate-700 rounded px-2.5 py-1 text-sm text-indigo-400 font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              value={examType}
-              onChange={(e) => setExamType(e.target.value)}
-            >
-              <option value="JEE_MAIN">JEE Main</option>
-              <option value="JEE_ADVANCED">JEE Advanced</option>
-              <option value="NEET">NEET UG</option>
-              <option value="UPSC">UPSC Civil Services</option>
-              <option value="CAT">CAT MBA</option>
-              <option value="GATE">GATE</option>
-            </select>
+            <label htmlFor="examHeaderSelect" className="text-xs text-slate-400 font-semibold">Active Mode</label>
+            <div className="flex items-center gap-2 mt-1">
+              <select
+                id="examHeaderSelect"
+                className="bg-slate-900 border border-slate-700 rounded px-2 py-0.5 text-xs text-indigo-400 font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                value={examType}
+                onChange={(e) => setExamType(e.target.value)}
+              >
+                <option value="JEE_MAIN">JEE Main</option>
+                <option value="JEE_ADVANCED">JEE Advanced</option>
+                <option value="NEET">NEET UG</option>
+                <option value="UPSC">UPSC Civil Services</option>
+                <option value="CAT">CAT MBA</option>
+              </select>
+              <button
+                onClick={handleSignOut}
+                className="bg-slate-900 border border-slate-850 hover:bg-slate-850 text-slate-400 hover:text-rose-400 p-1 rounded transition-all focus:ring-2 focus:ring-rose-500 focus:outline-none"
+                title="Sign Out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="bg-amber-500/10 border border-amber-500/30 rounded px-3 py-1 flex items-center gap-2">
@@ -425,10 +777,10 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Main Grid: Left side analytics, Right side AI Companion */}
+      {/* Main Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
         
-        {/* Left Columns (8/12 width on large screen) */}
+        {/* Left Columns */}
         <main className="xl:col-span-8 flex flex-col gap-6">
           
           {/* Quick Metrics Cards */}
@@ -476,7 +828,39 @@ export default function Dashboard() {
             </div>
           </section>
 
-          {/* Double Y-Axis Line Chart: Correlation between Stress and Mock Scores */}
+          {/* Active Stress Vector Classification Panel (Problem Alignment Boost) */}
+          <section className="glass-panel p-4 rounded-xl flex flex-col gap-3" aria-label="Targeted Stressor Monitoring">
+            <div>
+              <h2 className="text-md font-bold text-indigo-300 flex items-center gap-1.5">
+                <Target className="w-4.5 h-4.5 text-indigo-400" />
+                Targeted Exam Stressor Classifications
+              </h2>
+              <p className="text-xs text-slate-400">
+                Monitors specific Indian coaching stress vectors extracted dynamically from your daily journals.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className={`p-2.5 rounded-lg border ${hasStressor("peer_comparison") ? "bg-rose-500/10 border-rose-500/30 text-rose-300" : "bg-slate-900 border-slate-800 text-slate-400"}`}>
+                <p className="font-bold">Peer Comparison</p>
+                <p className="text-[10px] mt-0.5">{hasStressor("peer_comparison") ? "⚠️ Triggered: Self-Doubt" : "✓ Inactive"}</p>
+              </div>
+              <div className={`p-2.5 rounded-lg border ${hasStressor("backlog_panic") ? "bg-rose-500/10 border-rose-500/30 text-rose-300" : "bg-slate-900 border-slate-800 text-slate-400"}`}>
+                <p className="font-bold">Syllabus Backlog</p>
+                <p className="text-[10px] mt-0.5">{hasStressor("backlog_panic") ? "⚠️ Triggered: Paralysis" : "✓ Inactive"}</p>
+              </div>
+              <div className={`p-2.5 rounded-lg border ${hasStressor("parent_expectations") ? "bg-rose-500/10 border-rose-500/30 text-rose-300" : "bg-slate-900 border-slate-800 text-slate-400"}`}>
+                <p className="font-bold">Parent Pressure</p>
+                <p className="text-[10px] mt-0.5">{hasStressor("parent_expectations") ? "⚠️ Triggered: Shame Spiral" : "✓ Inactive"}</p>
+              </div>
+              <div className={`p-2.5 rounded-lg border ${hasStressor("mock_test_slump") ? "bg-rose-500/10 border-rose-500/30 text-rose-300" : "bg-slate-900 border-slate-800 text-slate-400"}`}>
+                <p className="font-bold">Mock test slump</p>
+                <p className="text-[10px] mt-0.5">{hasStressor("mock_test_slump") ? "⚠️ Triggered: Test Anxiety" : "✓ Inactive"}</p>
+              </div>
+            </div>
+          </section>
+
+          {/* Double Y-Axis Line Chart */}
           <section className="glass-panel p-5 rounded-xl flex flex-col gap-4">
             <div className="flex justify-between items-center">
               <div>
@@ -485,7 +869,7 @@ export default function Dashboard() {
               </div>
               <button 
                 onClick={() => setShowMockModal(true)}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-all"
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs py-1.5 px-3 rounded-lg flex items-center gap-1.5 transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               >
                 <Plus className="w-4 h-4" /> Log Test Score
               </button>
@@ -497,10 +881,8 @@ export default function Dashboard() {
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                   <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} />
                   
-                  {/* Left Axis: Mock Score */}
                   <YAxis yAxisId="left" stroke="#818cf8" label={{ value: 'Mock Score', angle: -90, position: 'insideLeft', style: { fill: '#818cf8', fontSize: 12 } }} />
                   
-                  {/* Right Axis: Stress Index */}
                   <YAxis yAxisId="right" orientation="right" stroke="#f43f5e" domain={[1, 10]} label={{ value: 'Stress Level', angle: 90, position: 'insideRight', style: { fill: '#f43f5e', fontSize: 12 } }} />
                   
                   <Tooltip 
@@ -546,9 +928,10 @@ export default function Dashboard() {
             </div>
 
             <div className="flex flex-col gap-3">
+              <label htmlFor="journalTextArea" style={srOnlyStyle}>Write daily journal text</label>
               <textarea
-                aria-label="Daily Journal Text Content"
-                className="w-full h-32 bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-xl p-3.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all resize-none"
+                id="journalTextArea"
+                className="w-full h-32 bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-xl p-3.5 text-sm text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:outline-none transition-all resize-none"
                 placeholder="Write honestly... e.g. 'I spent 4 hours on mock problems and got stuck. My friend scored 180, and my mom asked if I am studying hard enough. I feel overwhelmed and might fail...'"
                 value={journalContent}
                 onChange={(e) => setJournalContent(e.target.value)}
@@ -559,7 +942,7 @@ export default function Dashboard() {
                 <button
                   onClick={handleSubmitJournal}
                   disabled={analyzingJournal || !journalContent.trim()}
-                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-medium py-1.5 px-4 rounded-lg text-sm transition-all"
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-medium py-1.5 px-4 rounded-lg text-sm transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 >
                   {analyzingJournal ? "Analyzing Stress..." : "Log & Analyze Entry"}
                 </button>
@@ -592,7 +975,7 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {journalAnalysisResult.cognitive_distortions.length > 0 && (
+                {journalAnalysisResult.cognitive_distortions && journalAnalysisResult.cognitive_distortions.length > 0 && (
                   <div>
                     <span className="text-xs font-semibold text-amber-500 block mb-1">Identified Cognitive Distortions:</span>
                     <div className="flex flex-wrap gap-1.5">
@@ -605,39 +988,27 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {journalAnalysisResult.stress_vectors.length > 0 && (
-                  <div>
-                    <span className="text-xs font-semibold text-indigo-400 block mb-1">Stress Factors:</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {journalAnalysisResult.stress_vectors.map((v: string, idx: number) => (
-                        <span key={idx} className="bg-indigo-500/10 text-indigo-400 text-xs px-2 py-0.5 rounded border border-indigo-500/20">
-                          {v}
-                        </span>
+                {journalAnalysisResult.insights && journalAnalysisResult.insights.length > 0 && (
+                  <div className="border-t border-slate-800 pt-3">
+                    <span className="text-xs font-semibold text-slate-400 block mb-1.5">Recommended Actions:</span>
+                    <ul className="list-disc pl-4 space-y-1 text-slate-300">
+                      {journalAnalysisResult.insights.map((insight: string, idx: number) => (
+                        <li key={idx}>{insight}</li>
                       ))}
-                    </div>
+                    </ul>
                   </div>
                 )}
-
-                <div className="border-t border-slate-800 pt-3">
-                  <span className="text-xs font-semibold text-slate-400 block mb-1.5">Recommended Actions:</span>
-                  <ul className="list-disc pl-4 space-y-1 text-slate-300">
-                    {journalAnalysisResult.insights.map((insight: string, idx: number) => (
-                      <li key={idx}>{insight}</li>
-                    ))}
-                  </ul>
-                </div>
               </div>
             )}
           </section>
         </main>
 
-        {/* Right Columns: AI Empathetic Companion (4/12 width) */}
+        {/* Right Columns: AI Empathetic Companion */}
         <aside className="xl:col-span-4 flex flex-col gap-6 h-[85vh]">
           
           {/* Chat Panel Box */}
           <div className="glass-panel rounded-xl flex-1 flex flex-col overflow-hidden">
             
-            {/* Header info */}
             <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center gap-3 justify-between">
               <div className="flex items-center gap-2">
                 <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
@@ -646,8 +1017,11 @@ export default function Dashboard() {
               <span className="text-xs text-slate-400">Gemini 1.5 Flash</span>
             </div>
 
-            {/* Chat message listing */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col">
+            {/* Accessible Chat updates */}
+            <div 
+              aria-live="polite"
+              className="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col"
+            >
               {chatMessages.map((msg, index) => (
                 <div 
                   key={index}
@@ -666,7 +1040,7 @@ export default function Dashboard() {
             {/* Crisis Alert Modal Override */}
             {crisisTriggered && crisisData && (
               <div className="bg-rose-950/90 border-t border-rose-800 p-4 animate-slideUp max-h-72 overflow-y-auto">
-                <div className="flex items-start gap-2.5 text-rose-300 mb-3">
+                <div className="flex items-start gap-2.5 text-rose-300 mb-3" role="alert">
                   <AlertTriangle className="w-6 h-6 shrink-0" />
                   <div>
                     <h4 className="font-bold text-sm">Immediate Support Intercept</h4>
@@ -683,7 +1057,7 @@ export default function Dashboard() {
                       </div>
                       <a 
                         href={`tel:${help.phone}`}
-                        className="bg-rose-800 hover:bg-rose-700 text-white font-semibold py-1 px-3 rounded flex items-center gap-1 transition-all"
+                        className="bg-rose-800 hover:bg-rose-700 text-white font-semibold py-1 px-3 rounded flex items-center gap-1 transition-all focus:ring-2 focus:ring-rose-500 focus:outline-none"
                       >
                         <Phone className="w-3.5 h-3.5" /> Call
                       </a>
@@ -696,20 +1070,20 @@ export default function Dashboard() {
                     setCrisisTriggered(false);
                     setCrisisData(null);
                   }}
-                  className="w-full mt-4 bg-slate-900 hover:bg-slate-850 text-slate-300 text-xs py-1.5 rounded border border-slate-700 transition-all"
+                  className="w-full mt-4 bg-slate-900 hover:bg-slate-850 text-slate-300 text-xs py-1.5 rounded border border-slate-700 transition-all focus:ring-2 focus:ring-slate-500 focus:outline-none"
                 >
                   Close & Acknowledge Helplines
                 </button>
               </div>
             )}
 
-            {/* Stream/Chat Input Box */}
             <form onSubmit={handleSendChatMessage} className="bg-slate-900 border-t border-slate-800 p-3 flex gap-2">
+              <label htmlFor="chatInput" style={srOnlyStyle}>Send message to AI companion</label>
               <input
                 type="text"
-                aria-label="Send message to AI companion"
+                id="chatInput"
                 placeholder="Ask me something or vent..."
-                className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 text-sm focus:outline-none focus:border-indigo-500"
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
                 disabled={isStreaming || crisisTriggered}
@@ -717,19 +1091,19 @@ export default function Dashboard() {
               <button
                 type="submit"
                 disabled={isStreaming || !chatInput.trim() || crisisTriggered}
-                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 p-2.5 rounded-lg text-white transition-all"
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 p-2.5 rounded-lg text-white transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               >
                 <Send className="w-4.5 h-4.5" />
               </button>
             </form>
           </div>
 
-          {/* Active Tool Injection Component */}
+          {/* Active Tool Component */}
           {activeTool && (
             <div className="glass-panel p-4 rounded-xl border border-indigo-500/20 animate-fadeIn relative">
               <button 
                 onClick={() => setActiveTool(null)}
-                className="absolute top-2.5 right-2.5 text-xs text-slate-400 hover:text-white"
+                className="absolute top-2.5 right-2.5 text-xs text-slate-400 hover:text-white focus:text-white focus:outline-none"
               >
                 [Dismiss Tool]
               </button>
@@ -744,10 +1118,12 @@ export default function Dashboard() {
                     Reset your autonomic nervous system. Follow the expanding circle.
                   </p>
                   
-                  {/* Circle Breathing graphic */}
                   <div className="relative w-28 h-28 flex items-center justify-center mt-2">
                     <div className="absolute w-24 h-24 rounded-full border border-indigo-500/20" />
-                    <div className="w-20 h-20 rounded-full bg-gradient-neon opacity-70 breathing-circle flex items-center justify-center text-slate-950 font-bold text-sm">
+                    <div 
+                      aria-live="assertive"
+                      className="w-20 h-20 rounded-full bg-gradient-neon opacity-70 breathing-circle flex items-center justify-center text-slate-950 font-bold text-sm"
+                    >
                       {breathingPhase}
                     </div>
                   </div>
@@ -774,7 +1150,7 @@ export default function Dashboard() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => setPomoRunning(!pomoRunning)}
-                      className={`text-xs px-4 py-1.5 rounded-lg font-semibold transition-all ${
+                      className={`text-xs px-4 py-1.5 rounded-lg font-semibold transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none ${
                         pomoRunning ? "bg-amber-600 hover:bg-amber-700" : "bg-cyan-600 hover:bg-cyan-700"
                       }`}
                     >
@@ -786,7 +1162,7 @@ export default function Dashboard() {
                         setPomoMinutes(45);
                         setPomoSeconds(0);
                       }}
-                      className="bg-slate-900 border border-slate-700 text-slate-300 hover:text-white p-1.5 rounded-lg"
+                      className="bg-slate-900 border border-slate-700 text-slate-300 hover:text-white p-1.5 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                     >
                       <RotateCcw className="w-4.5 h-4.5" />
                     </button>
@@ -805,7 +1181,7 @@ export default function Dashboard() {
                   </p>
                   <button 
                     onClick={() => alert("Connecting to peer community channel...")}
-                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs py-1.5 rounded-lg mt-1 transition-all"
+                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium text-xs py-1.5 rounded-lg mt-1 transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   >
                     Join Support Channel
                   </button>
@@ -823,7 +1199,7 @@ export default function Dashboard() {
                   </p>
                   <button 
                     onClick={() => alert("Launching co-study focus timer...")}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs py-1.5 rounded-lg mt-1 transition-all"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs py-1.5 rounded-lg mt-1 transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                   >
                     Enter Focus Room
                   </button>
@@ -832,19 +1208,19 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Quick Interventions Manual recommendation triggers */}
+          {/* Quick Interventions */}
           <div className="glass-panel p-4 rounded-xl flex flex-col gap-2.5">
             <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Quick Coping Simulators</span>
             <div className="grid grid-cols-2 gap-2">
               <button 
                 onClick={() => setActiveTool("box_breathing")} 
-                className="bg-slate-900 border border-slate-800 hover:border-indigo-500 text-slate-200 text-xs py-2 rounded-lg transition-all"
+                className="bg-slate-900 border border-slate-800 hover:border-indigo-500 text-slate-200 text-xs py-2 rounded-lg transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               >
                 Box Breathing
               </button>
               <button 
                 onClick={() => setActiveTool("pomodoro_sprint")}
-                className="bg-slate-900 border border-slate-800 hover:border-cyan-500 text-slate-200 text-xs py-2 rounded-lg transition-all"
+                className="bg-slate-900 border border-slate-800 hover:border-cyan-500 text-slate-200 text-xs py-2 rounded-lg transition-all focus:ring-2 focus:ring-indigo-500 focus:outline-none"
               >
                 Pomodoro Timer
               </button>
@@ -868,7 +1244,7 @@ export default function Dashboard() {
                 <input 
                   type="text" 
                   id="mockNameInput"
-                  className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                   placeholder="e.g. AITS Physics Test 3"
                   value={newMockName}
                   onChange={(e) => setNewMockName(e.target.value)}
@@ -881,7 +1257,7 @@ export default function Dashboard() {
                 <input 
                   type="number" 
                   id="mockScoreInput"
-                  className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                   min="0"
                   max="300"
                   value={newMockScore}
@@ -895,7 +1271,7 @@ export default function Dashboard() {
                 <input 
                   type="number" 
                   id="mockAccuracyInput"
-                  className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:border-indigo-500"
+                  className="bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                   min="0"
                   max="100"
                   value={newMockAccuracy}
@@ -908,13 +1284,13 @@ export default function Dashboard() {
                 <button 
                   type="button" 
                   onClick={() => setShowMockModal(false)}
-                  className="flex-1 bg-slate-950 border border-slate-850 hover:bg-slate-900 hover:text-white py-1.5 rounded transition-all text-xs font-semibold"
+                  className="flex-1 bg-slate-950 border border-slate-850 hover:bg-slate-900 hover:text-white py-1.5 rounded transition-all text-xs font-semibold focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 >
                   Cancel
                 </button>
                 <button 
                   type="submit" 
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 py-1.5 text-white font-semibold rounded transition-all text-xs"
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 py-1.5 text-white font-semibold rounded transition-all text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"
                 >
                   Add to Dashboard
                 </button>
